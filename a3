@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# ======================================================
+# 🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
+# Autor: Levogne
+# Version: 1.0
+# Beschreibung: Zeigt eine ASCII-Baumstruktur von Verzeichnissen und Dateien.
+# Lizenz: MIT
+# ======================================================
+
+# Hilfe-Funktion
+usage() {
+    cat <<EOF
+
+🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
+
+Autor: Levogne
+Version: 1.0
+Lizenz: MIT
+
+Syntax:
+  asciitree [OPTION] [VERZEICHNIS]
+
+Optionen:
+  -h, --help       Zeigt diese Hilfe an
+  -a, --all        Zeigt Verzeichnisse und Dateien an
+  -v, --version    Zeigt die Skriptversion an
+  -0, -1, -2...    Zeigt die Struktur bis zur angegebenen Tiefe
+  --exc:<ORDNER1,ORDNER2,...>  Schließt bestimmte Ordner von der Anzeige aus
+  --export:<DATEI> Exportiert die Ausgabe in eine Datei
+
+Beispiele:
+  asciitree               Zeigt diese Hilfe an
+  asciitree ./            Zeigt nur die Verzeichnisstruktur des aktuellen Ordners
+  asciitree ./src         Zeigt nur die Verzeichnisstruktur des 'src'-Ordners
+  asciitree -a ./src      Zeigt die komplette Struktur inkl. Dateien des 'src'-Ordners
+  asciitree ./ -1         Zeigt nur eine Ebene von Unterordnern
+  asciitree ./ --exc:test,temp  Schließt die Ordner 'test' und 'temp' aus
+  asciitree ./ --export:baumstruktur.txt Exportiert die Struktur in eine Datei
+
+EOF
+}
+
+# Versions-Funktion
+version() {
+    echo "asciitree Version 1.0"
+}
+
+# Hauptbaumstruktur-Funktion mit Tiefensteuerung, Ausschlüssen und Export
+asciitree() {
+    local dir=${1:-.}
+    local indent=${2:-0}
+    local show_files=${3:-false}
+    local max_depth=${4:-9999}
+    local current_depth=${5:-0}
+    local exclude_dirs=(${6//,/ })  # Wandelt kommagetrennte Liste in ein Array um
+    local export_file=${7:-""}
+    local prefix="│   "
+    local last_prefix="└── "
+    local mid_prefix="├── "
+
+    # Verlasse Funktion, wenn maximale Tiefe erreicht ist
+    if [ "$current_depth" -ge "$max_depth" ]; then
+        return
+    fi
+
+    local items
+    if [ "$show_files" = true ]; then
+        items=$(ls -A "$dir")
+    else
+        items=$(find "$dir" -mindepth 1 -maxdepth 1 -type d | sed 's#.*/##')
+    fi
+
+    local count=$(echo "$items" | wc -l)
+    local i=1
+
+    for item in $items; do
+        local item_path="$dir/$item"
+        local abs_item_path=$(realpath "$item_path") # Absolute Pfade vergleichen
+
+        # Überspringe ausgeschlossene Ordner
+        for excluded in "${exclude_dirs[@]}"; do
+            local abs_excluded=$(realpath "$excluded")
+            if [[ "$abs_item_path" == "$abs_excluded" ]]; then
+                continue 2
+            fi
+        done
+
+        # Ausgabe vorbereiten
+        local output_line
+        if [ $i -eq $count ]; then
+            output_line="$(printf "%${indent}s")${last_prefix}$item"
+        else
+            output_line="$(printf "%${indent}s")${mid_prefix}$item"
+        fi
+
+        # In die Datei schreiben oder direkt ausgeben
+        if [ -n "$export_file" ]; then
+            echo "$output_line" >> "$export_file"
+        else
+            echo "$output_line"
+        fi
+
+        # Rekursiver Aufruf für Unterordner
+        if [ -d "$item_path" ]; then
+            asciitree "$item_path" $((indent + 4)) "$show_files" "$max_depth" $((current_depth + 1)) "${exclude_dirs[*]}" "$export_file"
+        fi
+        i=$((i + 1))
+    done
+}
+
+# Argumente verarbeiten
+if [ $# -eq 0 ]; then
+    usage
+    exit 0
+fi
+
+# Variablen für Optionen
+max_depth=9999
+show_files=false
+exclude_dirs=()
+export_file=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        -v|--version)
+            version
+            exit 0
+            ;;
+        -a|--all)
+            show_files=true
+            shift
+            ;;
+        -[0-9])
+            max_depth=${1:1}
+            shift
+            ;;
+        --exc:*)
+            exclude_dirs+=($(echo "${1#--exc:}" | tr ',' ' '))
+            shift
+            ;;
+        --export:*)
+            export_file="${1#--export:}"
+            > "$export_file" # Datei neu erstellen
+            shift
+            ;;
+        *)
+            dir="$1"
+            shift
+            ;;
+    esac
+done
+
+# Aufruf der Hauptfunktion
+asciitree "$dir" 0 "$show_files" "$max_depth" 0 "${exclude_dirs[*]}" "$export_file"
+
+# Abschlussmeldung für Export
+if [ -n "$export_file" ]; then
+    echo "🎉 Struktur wurde erfolgreich in '$export_file' exportiert."
+fi

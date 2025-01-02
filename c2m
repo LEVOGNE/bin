@@ -1,0 +1,39 @@
+#!/bin/bash
+
+# ======================================================
+# 🎋 c2m - Code2Merge in eine Textdatei
+# Autor: Levogne
+# Version: 1.0
+# Beschreibung: Fasst alle Dateiendungen in eine Textdatei
+# Lizenz: MIT
+# ======================================================
+
+show_help() {
+    echo "Verwendung: code2merge <dateierweiterung> <verzeichnis>"
+    echo "Beispiele:"
+    echo "  code2merge rs ."
+    echo "  code2merge py ./ordner"
+    echo "  code2merge css /pfad/zum/projekt"
+    echo ""
+    echo "Erstellt eine Datei 'code2merge.txt' mit allen gefundenen Dateien"
+    exit 1
+}
+
+if [ $# -ne 2 ]; then
+    show_help
+fi
+
+extension=$1
+directory=$2
+extension=${extension//\"/}
+
+# Leere oder erstelle die Ausgabedatei
+> code2merge.txt
+
+# Finde alle Dateien und verarbeite sie einzeln
+find "$directory" -name "*.$extension" -type f | while read -r file; do
+    echo "// ## FILE: $file" >> code2merge.txt
+    echo "// ## BEGIN ##" >> code2merge.txt
+    cat "$file" >> code2merge.txt
+    echo -e "\n// ## END ##\n" >> code2merge.txt
+done

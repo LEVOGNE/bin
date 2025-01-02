@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# ======================================================
+# 🎋 ds - .DS_Store Löscher
+# Autor: Levogne
+# Version: 1.0
+# Beschreibung: Dieses Skript löscht alle .DS_Store-Dateien in einem Verzeichnis und dessen Unterverzeichnissen.
+# Lizenz: MIT
+# ======================================================
+
+cleanup_dsstore() {
+    local dir=${1:-.}
+    local count=0
+
+    # Zähle die Anzahl der .DS_Store-Dateien im Verzeichnis und seinen Unterverzeichnissen
+    local total=$(find "$dir" -name ".DS_Store" | wc -l)
+    echo "Gesamtanzahl der .DS_Store-Dateien zum Löschen: $total"
+
+    if [ $total -eq 0 ]; then
+        echo "Keine .DS_Store-Dateien gefunden."
+        echo "Fertig!"
+        return
+    fi
+
+    # Finde und lösche alle .DS_Store-Dateien
+    find "$dir" -name ".DS_Store" | while read -r file; do
+        rm "$file"
+        count=$((count + 1))
+        # Zeige Fortschritt an
+        echo -ne "\rGelöschte Dateien: $count von $total"
+    done
+
+    echo -ne "\nGelöschte .DS_Store-Dateien: $count\n"
+    echo "Fertig!"
+}
+
+cleanup_dsstore "$1"
+
