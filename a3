@@ -3,7 +3,7 @@
 # ======================================================
 # 🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
 # Autor: Levogne
-# Version: 1.0
+# Version: 1.1
 # Beschreibung: Zeigt eine ASCII-Baumstruktur von Verzeichnissen und Dateien.
 # Lizenz: MIT
 # ======================================================
@@ -14,61 +14,61 @@ usage() {
 
 🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
 
-Autor: Levogne
-Version: 1.0
+Autor: Levogne  
+Version: 1.1  
 Lizenz: MIT
 
-Syntax:
-  asciitree [OPTION] [VERZEICHNIS]
+Syntax:  
+  a3 [OPTION] [VERZEICHNIS]  
 
-Optionen:
-  -h, --help       Zeigt diese Hilfe an
-  -a, --all        Zeigt Verzeichnisse und Dateien an
-  -v, --version    Zeigt die Skriptversion an
-  -0, -1, -2...    Zeigt die Struktur bis zur angegebenen Tiefe
-  --exc:<ORDNER1,ORDNER2,...>  Schließt bestimmte Ordner von der Anzeige aus
-  --export:<DATEI> Exportiert die Ausgabe in eine Datei
+Optionen:  
+  -h, --help       Zeigt diese Hilfe an  
+  -a, --all        Zeigt Verzeichnisse und Dateien an, inkl. versteckte Dateien  
+  -v, --version    Zeigt die Skriptversion an  
+  -0, -1, -2..     Zeigt die Struktur bis zur angegebenen Tiefe  
+  --exc ORDNER1,ORDNER2  Schließt bestimmte Ordner von der Anzeige aus  
+  --export DATEI   Exportiert die Ausgabe in eine Datei  
 
-Beispiele:
-  asciitree               Zeigt diese Hilfe an
-  asciitree ./            Zeigt nur die Verzeichnisstruktur des aktuellen Ordners
-  asciitree ./src         Zeigt nur die Verzeichnisstruktur des 'src'-Ordners
-  asciitree -a ./src      Zeigt die komplette Struktur inkl. Dateien des 'src'-Ordners
-  asciitree ./ -1         Zeigt nur eine Ebene von Unterordnern
-  asciitree ./ --exc:test,temp  Schließt die Ordner 'test' und 'temp' aus
-  asciitree ./ --export:baumstruktur.txt Exportiert die Struktur in eine Datei
+Beispiele:  
+  a3 ./                     Zeigt nur die sichtbare Verzeichnisstruktur  
+  a3 ./ -a                  Zeigt alle Dateien und Ordner inkl. versteckter Dateien  
+  a3 ./ --exc test,temp     Schließt 'test' und 'temp' aus  
+  a3 ./ --export baum.txt   Exportiert die Struktur in eine Datei  
 
 EOF
 }
 
 # Versions-Funktion
 version() {
-    echo "asciitree Version 1.0"
+    echo "asciitree Version 1.1"
 }
 
-# Hauptbaumstruktur-Funktion mit Tiefensteuerung, Ausschlüssen und Export
+# Hauptbaumstruktur-Funktion
 asciitree() {
     local dir=${1:-.}
     local indent=${2:-0}
     local show_files=${3:-false}
     local max_depth=${4:-9999}
     local current_depth=${5:-0}
-    local exclude_dirs=(${6//,/ })  # Wandelt kommagetrennte Liste in ein Array um
+    local exclude_dirs=(${6//,/ })
     local export_file=${7:-""}
     local prefix="│   "
     local last_prefix="└── "
     local mid_prefix="├── "
 
-    # Verlasse Funktion, wenn maximale Tiefe erreicht ist
+    # Verlasse die Funktion, wenn die maximale Tiefe erreicht ist
     if [ "$current_depth" -ge "$max_depth" ]; then
         return
     fi
 
     local items
+
     if [ "$show_files" = true ]; then
+        # Zeige alle Dateien und Ordner, inkl. versteckter
         items=$(ls -A "$dir")
     else
-        items=$(find "$dir" -mindepth 1 -maxdepth 1 -type d | sed 's#.*/##')
+        # Zeige nur sichtbare Dateien und Ordner
+        items=$(find "$dir" -mindepth 1 -maxdepth 1 ! -name ".*" | sed 's#.*/##')
     fi
 
     local count=$(echo "$items" | wc -l)
@@ -76,7 +76,7 @@ asciitree() {
 
     for item in $items; do
         local item_path="$dir/$item"
-        local abs_item_path=$(realpath "$item_path") # Absolute Pfade vergleichen
+        local abs_item_path=$(realpath "$item_path")
 
         # Überspringe ausgeschlossene Ordner
         for excluded in "${exclude_dirs[@]}"; do
@@ -94,7 +94,7 @@ asciitree() {
             output_line="$(printf "%${indent}s")${mid_prefix}$item"
         fi
 
-        # In die Datei schreiben oder direkt ausgeben
+        # Ausgabe entweder in Datei schreiben oder direkt anzeigen
         if [ -n "$export_file" ]; then
             echo "$output_line" >> "$export_file"
         else
@@ -115,11 +115,12 @@ if [ $# -eq 0 ]; then
     exit 0
 fi
 
-# Variablen für Optionen
+# Variablen
 max_depth=9999
 show_files=false
 exclude_dirs=()
 export_file=""
+dir=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -139,14 +140,24 @@ while [[ $# -gt 0 ]]; do
             max_depth=${1:1}
             shift
             ;;
-        --exc:*)
-            exclude_dirs+=($(echo "${1#--exc:}" | tr ',' ' '))
-            shift
+        --exc)
+            if [ -n "$2" ]; then
+                exclude_dirs+=($(echo "$2" | tr ',' ' '))
+                shift 2
+            else
+                echo "❌ Fehler: '--exc' benötigt eine Liste von Ordnern."
+                exit 1
+            fi
             ;;
-        --export:*)
-            export_file="${1#--export:}"
-            > "$export_file" # Datei neu erstellen
-            shift
+        --export)
+            if [ -n "$2" ]; then
+                export_file="$2"
+                > "$export_file"
+                shift 2
+            else
+                echo "❌ Fehler: '--export' benötigt einen Dateinamen."
+                exit 1
+            fi
             ;;
         *)
             dir="$1"
@@ -155,7 +166,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Aufruf der Hauptfunktion
+# Standardverzeichnis festlegen
+if [ -z "$dir" ]; then
+    dir="."
+fi
+
+# Hauptfunktion aufrufen
 asciitree "$dir" 0 "$show_files" "$max_depth" 0 "${exclude_dirs[*]}" "$export_file"
 
 # Abschlussmeldung für Export
