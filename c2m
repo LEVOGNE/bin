@@ -3,18 +3,18 @@
 # ======================================================
 # 🎋 c2m - Code2Merge in eine Textdatei
 # Autor: Levogne
-# Version: 1.1
-# Beschreibung: Fasst alle Dateien mit einer bestimmten Endung in eine Textdatei zusammen
+# Version: 1.2
+# Beschreibung: Fasst Dateien mit einer oder mehreren Endungen in eine Textdatei zusammen
 # Lizenz: MIT
 # ======================================================
 
 show_help() {
-    echo "Verwendung: code2merge <dateierweiterung> <verzeichnis> [--export <ausgabedatei>]"
+    echo "Verwendung: code2merge <dateierweiterungen> <verzeichnis> [--export <ausgabedatei>]"
     echo "Beispiele:"
     echo "  c2m rs ."
-    echo "  c2m py ./ordner"
-    echo "  c2m css /pfad/zum/projekt"
-    echo "  c2m rs . --export meine_datei.txt"
+    echo "  c2m py,js ./ordner"
+    echo "  c2m css,html /pfad/zum/projekt"
+    echo "  c2m rs,js . --export meine_datei.txt"
     echo ""
     echo "Standard-Ausgabedatei ist 'code2merge.txt', wenn kein --export angegeben wird."
     exit 1
@@ -26,7 +26,7 @@ if [ $# -lt 2 ]; then
 fi
 
 # Argumente parsen
-extension=$1
+extensions=$1
 directory=$2
 output_file="code2merge.txt" # Standardausgabedatei
 
@@ -38,18 +38,21 @@ elif [ "$3" == "--export" ] && [ -z "$4" ]; then
     exit 1
 fi
 
-# Entferne eventuelle Anführungszeichen aus der Erweiterung
-extension=${extension//\"/}
+# Entferne eventuelle Anführungszeichen aus den Erweiterungen
+extensions=${extensions//\"/}
 
 # Leere oder erstelle die Ausgabedatei
 > "$output_file"
 
-# Finde und verarbeite Dateien
-find "$directory" -name "*.$extension" -type f | while read -r file; do
-    echo "// ## FILE: $file" >> "$output_file"
-    echo "// ## BEGIN ##" >> "$output_file"
-    cat "$file" >> "$output_file"
-    echo -e "\n// ## END ##\n" >> "$output_file"
+# Verarbeite jede angegebene Erweiterung
+IFS=',' read -ra ext_array <<< "$extensions"
+for ext in "${ext_array[@]}"; do
+    find "$directory" -name "*.$ext" -type f | while read -r file; do
+        echo "// ## FILE: $file" >> "$output_file"
+        echo "// ## BEGIN ##" >> "$output_file"
+        cat "$file" >> "$output_file"
+        echo -e "\n// ## END ##\n" >> "$output_file"
+    done
 done
 
 echo "✅ Dateien wurden erfolgreich in '$output_file' zusammengeführt."
