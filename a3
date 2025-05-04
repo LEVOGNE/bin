@@ -3,7 +3,7 @@
 # ======================================================
 # 🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
 # Autor: Levogne
-# Version: 1.1
+# Version: 1.2
 # Beschreibung: Zeigt eine ASCII-Baumstruktur von Verzeichnissen und Dateien.
 # Lizenz: MIT
 # ======================================================
@@ -15,11 +15,12 @@ usage() {
 🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
 
 Autor: Levogne  
-Version: 1.1  
+Version: 1.2  
 Lizenz: MIT
 
 Syntax:  
   a3 [OPTION] [VERZEICHNIS]  
+  a3 <projekt-typ>
 
 Optionen:  
   -h, --help       Zeigt diese Hilfe an  
@@ -29,18 +30,46 @@ Optionen:
   --exc ORDNER1,ORDNER2  Schließt bestimmte Ordner von der Anzeige aus  
   --export DATEI   Exportiert die Ausgabe in eine Datei  
 
+Projekt-Typen:
+  fastapi          FastAPI-Projekte (ignoriert .venv, exports zu a3FASTAPI.txt)
+  vue              Vue.js-Projekte (ignoriert node_modules, exports zu a3VUE.txt)
+  react            React-Projekte (ignoriert node_modules, exports zu a3REACT.txt)
+  nuxt             Nuxt-Projekte (ignoriert node_modules, .nuxt, exports zu a3NUXT.txt)
+
 Beispiele:  
   a3 ./                     Zeigt nur die sichtbare Verzeichnisstruktur  
   a3 ./ -a                  Zeigt alle Dateien und Ordner inkl. versteckter Dateien  
   a3 ./ --exc test,temp     Schließt 'test' und 'temp' aus  
   a3 ./ --export baum.txt   Exportiert die Struktur in eine Datei  
+  a3 fastapi                Zeigt die Struktur für ein FastAPI-Projekt
 
 EOF
 }
 
 # Versions-Funktion
 version() {
-    echo "asciitree Version 1.1"
+    echo "asciitree Version 1.2"
+}
+
+# Verarbeitung für vordefinierte Projekt-Typen
+handle_project_type() {
+    case "$1" in
+        "fastapi")
+            exec "$0" ./ --exc .venv --export a3FASTAPI.txt
+            ;;
+        "vue")
+            exec "$0" ./ --exc node_modules,dist --export a3VUE.txt
+            ;;
+        "react")
+            exec "$0" ./ --exc node_modules,build --export a3REACT.txt
+            ;;
+        "nuxt")
+            exec "$0" ./ --exc node_modules,.nuxt,dist --export a3NUXT.txt
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 # Hauptbaumstruktur-Funktion
@@ -80,8 +109,8 @@ asciitree() {
 
         # Überspringe ausgeschlossene Ordner
         for excluded in "${exclude_dirs[@]}"; do
-            local abs_excluded=$(realpath "$excluded")
-            if [[ "$abs_item_path" == "$abs_excluded" ]]; then
+            local abs_excluded=$(realpath "$excluded" 2>/dev/null || echo "$excluded")
+            if [[ "$abs_item_path" == "$abs_excluded" || "$item" == "$excluded" ]]; then
                 continue 2
             fi
         done
@@ -108,6 +137,11 @@ asciitree() {
         i=$((i + 1))
     done
 }
+
+# Prüfen auf Projekt-Typ als einziges Argument
+if [ $# -eq 1 ] && [[ ! "$1" == -* ]]; then
+    handle_project_type "$1" || { echo "Unbekannter Projekt-Typ: $1"; usage; exit 1; }
+fi
 
 # Argumente verarbeiten
 if [ $# -eq 0 ]; then

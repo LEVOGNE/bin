@@ -2,16 +2,24 @@
 # ======================================================
 # 🎋 c2m - Code2Merge in eine Textdatei
 # Autor: Levogne
-# Version: 1.3
+# Version: 1.4
 # Beschreibung: Fasst Dateien mit einer oder mehreren Endungen in eine Textdatei zusammen
 # Lizenz: MIT
 # ======================================================
 
 show_help() {
     echo "Verwendung: code2merge <dateierweiterungen> <verzeichnis> [optionen]"
+    echo "            code2merge <projekt-typ>"
     echo "Optionen:"
     echo "  --export <ausgabedatei>  Benutzerdefinierte Ausgabedatei festlegen"
     echo "  --exec <ordner1,ordner2> Ordner, die ignoriert werden sollen"
+    echo "  --root <datei1,datei2>   Wichtige Dateien im Stammverzeichnis, die mit einbezogen werden sollen"
+    echo ""
+    echo "Projekt-Typen:"
+    echo "  fastapi                 Python-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mFASTAPI.txt)"
+    echo "  vue                     Vue, JS und TS-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mVUE.txt)"
+    echo "  react                   JS, JSX, TS und TSX-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mREACT.txt)"
+    echo "  nuxt                    Vue, JS und TS-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mNUXT.txt)"
     echo ""
     echo "Beispiele:"
     echo "  c2m rs ."
@@ -19,12 +27,45 @@ show_help() {
     echo "  c2m css,html /pfad/zum/projekt"
     echo "  c2m rs,js . --export meine_datei.txt"
     echo "  c2m js,ts,vue ./ --exec node_modules,build,dist"
+    echo "  c2m py ./ --root pyproject.toml,README.md"
+    echo "  c2m fastapi              # Kurzbefehl für Python-Projekte"
     echo ""
     echo "Standard-Ausgabedatei ist 'code2merge.txt', wenn kein --export angegeben wird."
     exit 1
 }
 
+# Verarbeitung für vordefinierte Projekt-Typen
+handle_project_type() {
+    case "$1" in
+        "fastapi")
+            exec "$0" py ./ --exec .venv --export c2mFASTAPI.txt --root pyproject.toml,README.md,Dockerfile,main.py,*.json
+            ;;
+        "vue")
+            exec "$0" vue,js,ts ./ --exec node_modules,dist --export c2mVUE.txt --root package.json,vite.config.js,vue.config.js,README.md,*.json
+            ;;
+        "react")
+            exec "$0" jsx,js,ts,tsx ./ --exec node_modules,build --export c2mREACT.txt --root package.json,webpack.config.js,README.md,*.json
+            ;;
+        "nuxt")
+            exec "$0" vue,js,ts ./ --exec node_modules,.nuxt,dist --export c2mNUXT.txt --root nuxt.config.ts,nuxt.config.js,package.json,README.md,*.json
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Argumentenprüfung
+if [ $# -lt 1 ]; then
+    show_help
+fi
+
+# Prüfe auf Projekt-Typ
+if [ $# -eq 1 ] && [[ ! "$1" == -* ]]; then
+    handle_project_type "$1" || { echo "Unbekannter Projekt-Typ: $1"; show_help; }
+fi
+
+# Reguläre Kommandoverarbeitung, wenn kein Projekt-Typ erkannt wurde
 if [ $# -lt 2 ]; then
     show_help
 fi
@@ -34,6 +75,7 @@ extensions=$1
 directory=$2
 output_file="code2merge.txt" # Standardausgabedatei
 exclude_dirs=""
+root_files=""
 
 # Argumente nach dem Verzeichnis verarbeiten
 shift 2
@@ -57,6 +99,15 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             ;;
+        --root)
+            if [ -n "$2" ]; then
+                root_files=$2
+                shift 2
+            else
+                echo "❌ Fehler: Das Flag '--root' wurde angegeben, aber keine Dateien wurden bereitgestellt."
+                exit 1
+            fi
+            ;;
         *)
             echo "❌ Fehler: Unbekanntes Argument '$1'"
             show_help
@@ -70,7 +121,36 @@ extensions=${extensions//\"/}
 # Leere oder erstelle die Ausgabedatei
 > "$output_file"
 
-# Verarbeite jede angegebene Erweiterung
+# Zuerst wichtige Dateien im Stammverzeichnis verarbeiten, wenn angegeben
+if [ -n "$root_files" ]; then
+    echo "// ===== WICHTIGE DATEIEN IM STAMMVERZEICHNIS =====" >> "$output_file"
+    echo "" >> "$output_file"
+    
+    IFS=',' read -ra root_array <<< "$root_files"
+    for pattern in "${root_array[@]}"; do
+        # Für jeden Muster finde passende Dateien
+        for file in $directory/$pattern; do
+            # Überprüfe, ob die Datei existiert und eine reguläre Datei ist
+            if [ -f "$file" ]; then
+                # Entferne führendes ./ falls vorhanden
+                display_file=${file#./}
+                
+                echo "// ## FILE: $display_file" >> "$output_file"
+                echo "// ## BEGIN ##" >> "$output_file"
+                cat "$file" >> "$output_file"
+                echo -e "\n// ## END ##\n" >> "$output_file"
+            fi
+        done
+    done
+    
+    echo "// ===== ENDE WICHTIGE DATEIEN =====" >> "$output_file"
+    echo -e "\n\n" >> "$output_file"
+fi
+
+# Dann reguläre Erweiterungen verarbeiten
+echo "// ===== DATEIEN NACH ERWEITERUNGEN =====" >> "$output_file"
+echo "" >> "$output_file"
+
 IFS=',' read -ra ext_array <<< "$extensions"
 for ext in "${ext_array[@]}"; do
     # Baue den find-Befehl
@@ -87,8 +167,6 @@ for ext in "${ext_array[@]}"; do
         done
     fi
     
-    # Debug-Ausgaben entfernt
-    
     # Führe den Befehl aus und verarbeite die Ergebnisse
     files=$(eval $find_cmd)
     
@@ -100,8 +178,6 @@ for ext in "${ext_array[@]}"; do
         if [ -z "$file" ]; then
             continue
         fi
-        
-        # Debug-Ausgabe entfernt
         
         # Füge Dateiinhalt zur Ausgabedatei hinzu
         echo "// ## FILE: $file" >> "$output_file"
