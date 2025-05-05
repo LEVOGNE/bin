@@ -2,25 +2,23 @@
 # ======================================================
 # 🎋 c2m - Code2Merge in eine Textdatei
 # Autor: Levogne
-# Version: 1.5
+# Version: 1.5.1
 # Beschreibung: Fasst Dateien mit einer oder mehreren Endungen in eine Textdatei zusammen
 # Lizenz: MIT
 # ======================================================
 
 show_help() {
     echo "Verwendung: code2merge <dateierweiterungen> <verzeichnis> [optionen]"
-    echo "            code2merge <projekt-typ>"
+    echo "            code2merge <projekt-typ> [optionen]"
+    echo ""
     echo "Optionen:"
-    echo "  --export <ausgabedatei>  Benutzerdefinierte Ausgabedatei festlegen"
-    echo "  --exec <ordner1,ordner2> Ordner, die ignoriert werden sollen"
-    echo "  --root <datei1,datei2>   Wichtige Dateien im Stammverzeichnis, die mit einbezogen werden sollen"
-    echo "  --exclude-files <datei1,datei2>  Dateien, die explizit ausgeschlossen werden sollen"
+    echo "  --export <ausgabedatei>         Benutzerdefinierte Ausgabedatei festlegen"
+    echo "  --exec <ordner1,ordner2>        Ordner, die ignoriert werden sollen"
+    echo "  --root <datei1,datei2>          Wichtige Dateien im Stammverzeichnis"
+    echo "  --exclude-files <datei1,datei2> Dateien, die explizit ausgeschlossen werden"
     echo ""
     echo "Projekt-Typen:"
-    echo "  fastapi                 Python-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mFASTAPI.txt)"
-    echo "  vue                     Vue, JS und TS-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mVUE.txt)"
-    echo "  react                   JS, JSX, TS und TSX-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mREACT.txt)"
-    echo "  nuxt                    Vue, JS und TS-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mNUXT.txt)"
+    echo "  fastapi  | vue | react | nuxt"
     echo ""
     echo "Beispiele:"
     echo "  c2m rs ."
@@ -29,215 +27,146 @@ show_help() {
     echo "  c2m rs,js . --export meine_datei.txt"
     echo "  c2m js,ts,vue ./ --exec node_modules,build,dist"
     echo "  c2m py ./ --root pyproject.toml,README.md"
-    echo "  c2m nuxt --exclude-files package-lock.json     # Nutzt Nuxt-Konfiguration und schließt package-lock.json aus"
+    echo "  c2m nuxt --exclude-files package-lock.json     # Nutzt Nuxt-Voreinstellungen und schließt bestimmte Dateien aus"
     echo ""
     echo "Standard-Ausgabedatei ist 'code2merge.txt', wenn kein --export angegeben wird."
     exit 1
 }
 
-# Verarbeitung für vordefinierte Projekt-Typen
-handle_project_type() {
-    case "$1" in
-        "fastapi")
-            shift
-            exec "$0" py ./ --exec .venv --export c2mFASTAPI.txt --root pyproject.toml,README.md,Dockerfile,main.py,*.json "$@"
-            ;;
-        "vue")
-            shift
-            exec "$0" vue,js,ts ./ --exec node_modules,dist --export c2mVUE.txt --root package.json,vite.config.js,vue.config.js,README.md,*.json "$@"
-            ;;
-        "react")
-            shift
-            exec "$0" jsx,js,ts,tsx ./ --exec node_modules,build --export c2mREACT.txt --root package.json,webpack.config.js,README.md,*.json "$@"
-            ;;
-        "nuxt")
-            shift
-            exec "$0" vue,js,ts ./ --exec node_modules,.nuxt,dist --export c2mNUXT.txt --root nuxt.config.ts,nuxt.config.js,package.json,README.md,*.json --exclude-files package-lock.json "$@"
-            ;;
-    esac
-}
 
-# Argumentenprüfung
+# Falls kein Argument übergeben wurde
 if [ $# -lt 1 ]; then
     show_help
 fi
 
-# Prüfe auf Projekt-Typ und sammle zusätzliche Argumente
-additional_args=""
-if [[ ! "$1" == -* ]]; then
-    project_type="$1"
+# Vordefinierte Projekt-Typen behandeln
+handle_project_type() {
+    local type="$1"
     shift
-    
-    # Sammle alle weiteren Argumente
-    while [ "$#" -gt 0 ]; do
-        additional_args="$additional_args $1"
-        shift
-    done
-    
-    # Versuche, den Projekt-Typ zu verarbeiten
-    handle_project_type "$project_type" $additional_args || { echo "Unbekannter Projekt-Typ: $project_type"; show_help; }
+    case "$type" in
+        "fastapi")
+            set -- "py" "./" \
+                --exec ".venv" \
+                --export "c2mFASTAPI.txt" \
+                --root "pyproject.toml,README.md,Dockerfile,main.py,*.json" "$@"
+            ;;
+        "vue")
+            set -- "vue,js,ts" "./" \
+                --exec "node_modules,dist" \
+                --export "c2mVUE.txt" \
+                --root "package.json,vite.config.js,vue.config.js,README.md,*.json" "$@"
+            ;;
+        "react")
+            set -- "jsx,js,ts,tsx" "./" \
+                --exec "node_modules,build" \
+                --export "c2mREACT.txt" \
+                --root "package.json,webpack.config.js,README.md,*.json" "$@"
+            ;;
+        "nuxt")
+            set -- "vue,js,ts" "./" \
+                --exec "node_modules,.nuxt,dist" \
+                --export "c2mNUXT.txt" \
+                --root "nuxt.config.ts,nuxt.config.js,package.json,README.md,*.json" \
+                --exclude-files "package-lock.json,yarn-lock.json" "$@"
+            ;;
+        *)
+            echo "❌ Unbekannter Projekt-Typ: $type"
+            show_help
+            ;;
+    esac
+    "$0" "$@"   # Skript neu aufrufen mit neuen Argumenten
     exit 0
+}
+
+# Projekt-Typ erkennen
+if [[ ! "$1" =~ ^- ]]; then
+    case "$1" in
+        fastapi|vue|react|nuxt)
+            handle_project_type "$@"
+            ;;
+    esac
 fi
 
-# Reguläre Kommandoverarbeitung, wenn kein Projekt-Typ erkannt wurde
+# Falls nicht als Projekt-Typ, dann regulär parsen
 if [ $# -lt 2 ]; then
     show_help
 fi
 
-# Argumente parsen
+# === Initialwerte ===
 extensions=$1
 directory=$2
-output_file="code2merge.txt" # Standardausgabedatei
+output_file="code2merge.txt"
 exclude_dirs=""
 root_files=""
 exclude_files=""
 
-# Argumente nach dem Verzeichnis verarbeiten
 shift 2
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --export)
-            if [ -n "$2" ]; then
-                output_file=$2
-                shift 2
-            else
-                echo "❌ Fehler: Das Flag '--export' wurde angegeben, aber kein Dateiname wurde bereitgestellt."
-                exit 1
-            fi
-            ;;
+            output_file="$2"; shift 2 ;;
         --exec)
-            if [ -n "$2" ]; then
-                exclude_dirs=$2
-                shift 2
-            else
-                echo "❌ Fehler: Das Flag '--exec' wurde angegeben, aber keine Ordner wurden bereitgestellt."
-                exit 1
-            fi
-            ;;
+            exclude_dirs="$2"; shift 2 ;;
         --root)
-            if [ -n "$2" ]; then
-                root_files=$2
-                shift 2
-            else
-                echo "❌ Fehler: Das Flag '--root' wurde angegeben, aber keine Dateien wurden bereitgestellt."
-                exit 1
-            fi
-            ;;
+            root_files="$2"; shift 2 ;;
         --exclude-files)
-            if [ -n "$2" ]; then
-                exclude_files=$2
-                shift 2
-            else
-                echo "❌ Fehler: Das Flag '--exclude-files' wurde angegeben, aber keine Dateien wurden bereitgestellt."
-                exit 1
-            fi
-            ;;
+            exclude_files="$2"; shift 2 ;;
         *)
-            echo "❌ Fehler: Unbekanntes Argument '$1'"
-            show_help
-            ;;
+            echo "❌ Unbekanntes Argument: $1"
+            show_help ;;
     esac
 done
 
-# Entferne eventuelle Anführungszeichen aus den Erweiterungen
-extensions=${extensions//\"/}
-
-# Leere oder erstelle die Ausgabedatei
+# === Start Ausgabe ===
 > "$output_file"
 
-# Zuerst wichtige Dateien im Stammverzeichnis verarbeiten, wenn angegeben
+# === Stammdateien ===
 if [ -n "$root_files" ]; then
     echo "// ===== WICHTIGE DATEIEN IM STAMMVERZEICHNIS =====" >> "$output_file"
     echo "" >> "$output_file"
-    
     IFS=',' read -ra root_array <<< "$root_files"
     for pattern in "${root_array[@]}"; do
-        # Für jeden Muster finde passende Dateien
         for file in $directory/$pattern; do
-            # Überprüfe, ob die Datei existiert und eine reguläre Datei ist
-            if [ -f "$file" ]; then
-                # Überprüfe, ob die Datei ausgeschlossen werden soll
-                skip_file=0
-                if [ -n "$exclude_files" ]; then
-                    IFS=',' read -ra exclude_files_array <<< "$exclude_files"
-                    for exclude_file in "${exclude_files_array[@]}"; do
-                        if [[ "$file" == *"$exclude_file"* ]]; then
-                            skip_file=1
-                            break
-                        fi
-                    done
-                fi
-                
-                if [ $skip_file -eq 1 ]; then
-                    echo "🔵 Datei wird übersprungen: $file"
-                    continue
-                fi
-                
-                # Entferne führendes ./ falls vorhanden
-                display_file=${file#./}
-                
-                echo "// ## FILE: $display_file" >> "$output_file"
-                echo "// ## BEGIN ##" >> "$output_file"
-                cat "$file" >> "$output_file"
-                echo -e "\n// ## END ##\n" >> "$output_file"
+            [ -f "$file" ] || continue
+            skip=0
+            if [ -n "$exclude_files" ]; then
+                IFS=',' read -ra exclude_array <<< "$exclude_files"
+                for ex in "${exclude_array[@]}"; do
+                    [[ "$file" == *"$ex"* ]] && skip=1 && break
+                done
             fi
+            [ "$skip" -eq 1 ] && echo "🔵 Datei wird übersprungen: $file" && continue
+            echo "// ## FILE: ${file#./}" >> "$output_file"
+            echo "// ## BEGIN ##" >> "$output_file"
+            cat "$file" >> "$output_file"
+            echo -e "\n// ## END ##\n" >> "$output_file"
         done
     done
-    
     echo "// ===== ENDE WICHTIGE DATEIEN =====" >> "$output_file"
-    echo -e "\n\n" >> "$output_file"
+    echo "" >> "$output_file"
 fi
 
-# Dann reguläre Erweiterungen verarbeiten
+# === Dateisuche nach Erweiterungen ===
 echo "// ===== DATEIEN NACH ERWEITERUNGEN =====" >> "$output_file"
-echo "" >> "$output_file"
-
 IFS=',' read -ra ext_array <<< "$extensions"
 for ext in "${ext_array[@]}"; do
-    # Baue den find-Befehl
-    find_cmd="find \"$directory\" -type f -name \"*.$ext\""
-    
-    # Füge Ausschlüsse für Verzeichnisse hinzu, die mit einem Punkt beginnen
-    find_cmd="$find_cmd | grep -v \"/\.\""
-    
-    # Füge benutzerdefinierte Ausschlüsse hinzu
+    files=$(find "$directory" -type f -name "*.$ext" | grep -v "/\.")
     if [ -n "$exclude_dirs" ]; then
-        IFS=',' read -ra exclude_array <<< "$exclude_dirs"
-        for exclude in "${exclude_array[@]}"; do
-            find_cmd="$find_cmd | grep -v \"/$exclude/\""
+        IFS=',' read -ra exdirs <<< "$exclude_dirs"
+        for d in "${exdirs[@]}"; do
+            files=$(echo "$files" | grep -v "/$d/")
         done
     fi
-    
-    # Führe den Befehl aus und verarbeite die Ergebnisse
-    files=$(eval $find_cmd)
-    
-    if [ -z "$files" ]; then
-        continue
-    fi
-    
     echo "$files" | while read -r file; do
-        if [ -z "$file" ]; then
-            continue
-        fi
-        
-        # Überprüfe, ob die Datei ausgeschlossen werden soll
-        skip_file=0
+        [ -z "$file" ] && continue
+        skip=0
         if [ -n "$exclude_files" ]; then
-            IFS=',' read -ra exclude_files_array <<< "$exclude_files"
-            for exclude_file in "${exclude_files_array[@]}"; do
-                if [[ "$file" == *"$exclude_file"* ]]; then
-                    skip_file=1
-                    break
-                fi
+            IFS=',' read -ra exclude_array <<< "$exclude_files"
+            for ex in "${exclude_array[@]}"; do
+                [[ "$file" == *"$ex"* ]] && skip=1 && break
             done
         fi
-        
-        if [ $skip_file -eq 1 ]; then
-            echo "🔵 Datei wird übersprungen: $file"
-            continue
-        fi
-        
-        # Füge Dateiinhalt zur Ausgabedatei hinzu
+        [ "$skip" -eq 1 ] && echo "🔵 Datei wird übersprungen: $file" && continue
         echo "// ## FILE: $file" >> "$output_file"
         echo "// ## BEGIN ##" >> "$output_file"
         cat "$file" >> "$output_file"
