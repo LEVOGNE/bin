@@ -2,7 +2,7 @@
 # ======================================================
 # 🎋 c2m - Code2Merge in eine Textdatei
 # Autor: Levogne
-# Version: 1.4
+# Version: 1.5
 # Beschreibung: Fasst Dateien mit einer oder mehreren Endungen in eine Textdatei zusammen
 # Lizenz: MIT
 # ======================================================
@@ -14,6 +14,7 @@ show_help() {
     echo "  --export <ausgabedatei>  Benutzerdefinierte Ausgabedatei festlegen"
     echo "  --exec <ordner1,ordner2> Ordner, die ignoriert werden sollen"
     echo "  --root <datei1,datei2>   Wichtige Dateien im Stammverzeichnis, die mit einbezogen werden sollen"
+    echo "  --exclude-files <datei1,datei2>  Dateien, die explizit ausgeschlossen werden sollen"
     echo ""
     echo "Projekt-Typen:"
     echo "  fastapi                 Python-Dateien mit wichtigen Config-Dateien (Ausgabe: c2mFASTAPI.txt)"
@@ -28,7 +29,7 @@ show_help() {
     echo "  c2m rs,js . --export meine_datei.txt"
     echo "  c2m js,ts,vue ./ --exec node_modules,build,dist"
     echo "  c2m py ./ --root pyproject.toml,README.md"
-    echo "  c2m fastapi              # Kurzbefehl für Python-Projekte"
+    echo "  c2m nuxt --exclude-files package-lock.json     # Nutzt Nuxt-Konfiguration und schließt package-lock.json aus"
     echo ""
     echo "Standard-Ausgabedatei ist 'code2merge.txt', wenn kein --export angegeben wird."
     exit 1
@@ -38,19 +39,20 @@ show_help() {
 handle_project_type() {
     case "$1" in
         "fastapi")
-            exec "$0" py ./ --exec .venv --export c2mFASTAPI.txt --root pyproject.toml,README.md,Dockerfile,main.py,*.json
+            shift
+            exec "$0" py ./ --exec .venv --export c2mFASTAPI.txt --root pyproject.toml,README.md,Dockerfile,main.py,*.json "$@"
             ;;
         "vue")
-            exec "$0" vue,js,ts ./ --exec node_modules,dist --export c2mVUE.txt --root package.json,vite.config.js,vue.config.js,README.md,*.json
+            shift
+            exec "$0" vue,js,ts ./ --exec node_modules,dist --export c2mVUE.txt --root package.json,vite.config.js,vue.config.js,README.md,*.json "$@"
             ;;
         "react")
-            exec "$0" jsx,js,ts,tsx ./ --exec node_modules,build --export c2mREACT.txt --root package.json,webpack.config.js,README.md,*.json
+            shift
+            exec "$0" jsx,js,ts,tsx ./ --exec node_modules,build --export c2mREACT.txt --root package.json,webpack.config.js,README.md,*.json "$@"
             ;;
         "nuxt")
-            exec "$0" vue,js,ts ./ --exec node_modules,.nuxt,dist --export c2mNUXT.txt --root nuxt.config.ts,nuxt.config.js,package.json,README.md,*.json
-            ;;
-        *)
-            return 1
+            shift
+            exec "$0" vue,js,ts ./ --exec node_modules,.nuxt,dist --export c2mNUXT.txt --root nuxt.config.ts,nuxt.config.js,package.json,README.md,*.json --exclude-files package-lock.json "$@"
             ;;
     esac
 }
@@ -60,9 +62,21 @@ if [ $# -lt 1 ]; then
     show_help
 fi
 
-# Prüfe auf Projekt-Typ
-if [ $# -eq 1 ] && [[ ! "$1" == -* ]]; then
-    handle_project_type "$1" || { echo "Unbekannter Projekt-Typ: $1"; show_help; }
+# Prüfe auf Projekt-Typ und sammle zusätzliche Argumente
+additional_args=""
+if [[ ! "$1" == -* ]]; then
+    project_type="$1"
+    shift
+    
+    # Sammle alle weiteren Argumente
+    while [ "$#" -gt 0 ]; do
+        additional_args="$additional_args $1"
+        shift
+    done
+    
+    # Versuche, den Projekt-Typ zu verarbeiten
+    handle_project_type "$project_type" $additional_args || { echo "Unbekannter Projekt-Typ: $project_type"; show_help; }
+    exit 0
 fi
 
 # Reguläre Kommandoverarbeitung, wenn kein Projekt-Typ erkannt wurde
@@ -76,6 +90,7 @@ directory=$2
 output_file="code2merge.txt" # Standardausgabedatei
 exclude_dirs=""
 root_files=""
+exclude_files=""
 
 # Argumente nach dem Verzeichnis verarbeiten
 shift 2
@@ -108,6 +123,15 @@ while [ "$#" -gt 0 ]; do
                 exit 1
             fi
             ;;
+        --exclude-files)
+            if [ -n "$2" ]; then
+                exclude_files=$2
+                shift 2
+            else
+                echo "❌ Fehler: Das Flag '--exclude-files' wurde angegeben, aber keine Dateien wurden bereitgestellt."
+                exit 1
+            fi
+            ;;
         *)
             echo "❌ Fehler: Unbekanntes Argument '$1'"
             show_help
@@ -132,6 +156,23 @@ if [ -n "$root_files" ]; then
         for file in $directory/$pattern; do
             # Überprüfe, ob die Datei existiert und eine reguläre Datei ist
             if [ -f "$file" ]; then
+                # Überprüfe, ob die Datei ausgeschlossen werden soll
+                skip_file=0
+                if [ -n "$exclude_files" ]; then
+                    IFS=',' read -ra exclude_files_array <<< "$exclude_files"
+                    for exclude_file in "${exclude_files_array[@]}"; do
+                        if [[ "$file" == *"$exclude_file"* ]]; then
+                            skip_file=1
+                            break
+                        fi
+                    done
+                fi
+                
+                if [ $skip_file -eq 1 ]; then
+                    echo "🔵 Datei wird übersprungen: $file"
+                    continue
+                fi
+                
                 # Entferne führendes ./ falls vorhanden
                 display_file=${file#./}
                 
@@ -176,6 +217,23 @@ for ext in "${ext_array[@]}"; do
     
     echo "$files" | while read -r file; do
         if [ -z "$file" ]; then
+            continue
+        fi
+        
+        # Überprüfe, ob die Datei ausgeschlossen werden soll
+        skip_file=0
+        if [ -n "$exclude_files" ]; then
+            IFS=',' read -ra exclude_files_array <<< "$exclude_files"
+            for exclude_file in "${exclude_files_array[@]}"; do
+                if [[ "$file" == *"$exclude_file"* ]]; then
+                    skip_file=1
+                    break
+                fi
+            done
+        fi
+        
+        if [ $skip_file -eq 1 ]; then
+            echo "🔵 Datei wird übersprungen: $file"
             continue
         fi
         
