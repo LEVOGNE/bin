@@ -150,13 +150,10 @@ fi
 echo "// ===== DATEIEN NACH ERWEITERUNGEN =====" >> "$output_file"
 IFS=',' read -ra ext_array <<< "$extensions"
 for ext in "${ext_array[@]}"; do
-    files=$(find "$directory" -type f -name "*.$ext" | grep -v "/\.")
-    if [ -n "$exclude_dirs" ]; then
-        IFS=',' read -ra exdirs <<< "$exclude_dirs"
-        for d in "${exdirs[@]}"; do
-            files=$(echo "$files" | grep -v "/$d/")
-        done
-    fi
+    # Finde Dateien mit einfacher (z.B. foo.ts) oder doppelter Erweiterung (z.B. foo.d.ts)
+    files=$(find "$directory" -type f \
+        \( -name "*.$ext" -o -name "*.*.$ext" \) \
+        | grep -v "/\.")
     echo "$files" | while read -r file; do
         [ -z "$file" ] && continue
         skip=0
