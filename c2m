@@ -45,25 +45,25 @@ handle_project_type() {
     shift
     case "$type" in
         "fastapi")
-            set -- "py" "./" \
+            set -- "py,html,css" "./" \
                 --exec ".venv" \
                 --export "c2mFASTAPI.txt" \
                 --root "pyproject.toml,README.md,Dockerfile,main.py,*.json" "$@"
             ;;
         "vue")
-            set -- "vue,js,ts" "./" \
+            set -- "vue,js,ts,css,scss,html" "./" \
                 --exec "node_modules,dist" \
                 --export "c2mVUE.txt" \
                 --root "package.json,vite.config.js,vue.config.js,README.md,*.json" "$@"
             ;;
         "react")
-            set -- "jsx,js,ts,tsx" "./" \
+            set -- "jsx,js,ts,tsx,css,scss,html" "./" \
                 --exec "node_modules,build" \
                 --export "c2mREACT.txt" \
                 --root "package.json,webpack.config.js,README.md,*.json" "$@"
             ;;
         "nuxt")
-            set -- "vue,js,ts" "./" \
+            set -- "vue,js,ts,css,scss,html" "./" \
                 --exec "node_modules,.nuxt,dist" \
                 --export "c2mNUXT.txt" \
                 --root "nuxt.config.ts,nuxt.config.js,package.json,README.md,*.json" \
@@ -77,6 +77,7 @@ handle_project_type() {
     "$0" "$@"   # Skript neu aufrufen mit neuen Argumenten
     exit 0
 }
+
 
 # Projekt-Typ erkennen
 if [[ ! "$1" =~ ^- ]]; then
