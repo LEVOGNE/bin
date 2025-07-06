@@ -1,8 +1,8 @@
 #!/bin/bash
 # ======================================================
-# 🎋 c2m - Code2Merge in eine Textdatei
+# 🎋 c2m - Code2Merge in eine Textdatei (FIXED)
 # Autor: Levogne
-# Version: 1.5.1
+# Version: 1.7 (Output-File Exclusion Fix)
 # Beschreibung: Fasst Dateien mit einer oder mehreren Endungen in eine Textdatei zusammen
 # Lizenz: MIT
 # ======================================================
@@ -27,19 +27,16 @@ show_help() {
     echo "  c2m rs,js . --export meine_datei.txt"
     echo "  c2m js,ts,vue ./ --exec node_modules,build,dist"
     echo "  c2m py ./ --root pyproject.toml,README.md"
-    echo "  c2m nuxt --exclude-files package-lock.json     # Nutzt Nuxt-Voreinstellungen und schließt bestimmte Dateien aus"
+    echo "  c2m nuxt --exclude-files package-lock.json"
     echo ""
     echo "Standard-Ausgabedatei ist 'code2merge.txt', wenn kein --export angegeben wird."
     exit 1
 }
 
-
-# Falls kein Argument übergeben wurde
 if [ $# -lt 1 ]; then
     show_help
 fi
 
-# Vordefinierte Projekt-Typen behandeln
 handle_project_type() {
     local type="$1"
     shift
@@ -74,10 +71,9 @@ handle_project_type() {
             show_help
             ;;
     esac
-    "$0" "$@"   # Skript neu aufrufen mit neuen Argumenten
+    "$0" "$@"
     exit 0
 }
-
 
 # Projekt-Typ erkennen
 if [[ ! "$1" =~ ^- ]]; then
@@ -88,7 +84,6 @@ if [[ ! "$1" =~ ^- ]]; then
     esac
 fi
 
-# Falls nicht als Projekt-Typ, dann regulär parsen
 if [ $# -lt 2 ]; then
     show_help
 fi
@@ -117,6 +112,19 @@ while [ "$#" -gt 0 ]; do
             show_help ;;
     esac
 done
+
+# === FIX: Output-File automatisch zu exclude_files hinzufügen ===
+output_basename=$(basename "$output_file")
+if [ -n "$exclude_files" ]; then
+    exclude_files="$exclude_files,$output_basename"
+else
+    exclude_files="$output_basename"
+fi
+
+# === Zusätzliche Standard-Excludes für Merge-Files ===
+exclude_files="$exclude_files,code2merge.txt,c2mNUXT.txt,c2mVUE.txt,c2mREACT.txt,c2mFASTAPI.txt"
+
+echo "🔍 Excludierte Dateien: $exclude_files"
 
 # === Start Ausgabe ===
 > "$output_file"
@@ -150,14 +158,60 @@ fi
 # === Dateisuche nach Erweiterungen ===
 echo "// ===== DATEIEN NACH ERWEITERUNGEN =====" >> "$output_file"
 IFS=',' read -ra ext_array <<< "$extensions"
+
+# === Klare find-Befehl Konstruktion ohne Array-Fuckerei ===
+build_find_command() {
+    local ext="$1"
+    local cmd="find $directory"
+    
+    # Ordner excludieren
+    if [ -n "$exclude_dirs" ]; then
+        IFS=',' read -ra exdirs <<< "$exclude_dirs"
+        for exdir in "${exdirs[@]}"; do
+            # Normalisiere den Pfad
+            if [[ "$directory" == "./" ]]; then
+                cmd="$cmd ! -path \"./$exdir/*\""
+            else
+                cmd="$cmd ! -path \"$directory/$exdir/*\""
+            fi
+        done
+    fi
+    
+    # Standard-Excludes für Build-Ordner
+    if [[ "$directory" == "./" ]]; then
+        cmd="$cmd ! -path \"./node_modules/*\""
+        cmd="$cmd ! -path \"./.git/*\""
+        cmd="$cmd ! -path \"./.nuxt/*\""
+        cmd="$cmd ! -path \"./dist/*\""
+        cmd="$cmd ! -path \"./.output/*\""
+    fi
+    
+    # Output-Files excludieren
+    cmd="$cmd ! -name \"$output_basename\""
+    cmd="$cmd ! -name \"code2merge.txt\""
+    cmd="$cmd ! -name \"c2mNUXT.txt\""
+    cmd="$cmd ! -name \"c2mVUE.txt\""
+    cmd="$cmd ! -name \"c2mREACT.txt\""
+    cmd="$cmd ! -name \"c2mFASTAPI.txt\""
+    
+    # Dateityp und Extension
+    cmd="$cmd -type f \\( -name \"*.$ext\" -o -name \"*.*.$ext\" \\)"
+    
+    echo "$cmd"
+}
+
 for ext in "${ext_array[@]}"; do
-    # Finde Dateien mit einfacher (z.B. foo.ts) oder doppelter Erweiterung (z.B. foo.d.ts)
-    files=$(find "$directory" -type f \
-        \( -name "*.$ext" -o -name "*.*.$ext" \) \
-        | grep -v "/\.")
-    echo "$files" | while read -r file; do
+    find_command=$(build_find_command "$ext")
+    echo "🔍 Find-Befehl: $find_command"
+    
+    while IFS= read -r file; do
         [ -z "$file" ] && continue
         skip=0
+        
+        # === Doppelte Sicherheit: Nochmal checken ob es das Output-File ist ===
+        file_basename=$(basename "$file")
+        [[ "$file_basename" == "$output_basename" ]] && skip=1
+        
         if [ -n "$exclude_files" ]; then
             IFS=',' read -ra exclude_array <<< "$exclude_files"
             for ex in "${exclude_array[@]}"; do
@@ -165,11 +219,22 @@ for ext in "${ext_array[@]}"; do
             done
         fi
         [ "$skip" -eq 1 ] && echo "🔵 Datei wird übersprungen: $file" && continue
-        echo "// ## FILE: $file" >> "$output_file"
+        
+        echo "📄 Verarbeite: $file"
+        echo "// ## FILE: ${file#./}" >> "$output_file"
         echo "// ## BEGIN ##" >> "$output_file"
         cat "$file" >> "$output_file"
         echo -e "\n// ## END ##\n" >> "$output_file"
-    done
+    done < <(eval "$find_command")
 done
 
+# === Abschluss-Info ===
+file_size=$(ls -lh "$output_file" | awk '{print $5}')
 echo "✅ Dateien wurden erfolgreich in '$output_file' zusammengeführt."
+echo "📊 Dateigröße: $file_size"
+
+# === Warnung bei verdächtiger Größe ===
+file_size_bytes=$(stat -c%s "$output_file" 2>/dev/null || stat -f%z "$output_file" 2>/dev/null)
+if [ "$file_size_bytes" -gt 10485760 ]; then  # > 10MB
+    echo "⚠️  WARNUNG: Datei ist größer als 10MB - prüfe auf doppelte Includes!"
+fi
