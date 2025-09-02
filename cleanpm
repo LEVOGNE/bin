@@ -1,0 +1,136 @@
+#!/bin/bash
+
+# Cache-Cleaner für Nuxt + pnpm/npm
+# Löscht alle Cache-Ordner und Dependencies
+
+set -e  # Exit on error
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# Helper function for colored output
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
+
+# Header
+echo -e "${BLUE}============================================${NC}"
+echo -e "${BLUE}🧹 Cache Cleaner für Nuxt + pnpm/npm${NC}"
+echo -e "${BLUE}============================================${NC}"
+echo
+
+# Check if we're in a Node.js project
+if [ ! -f "package.json" ]; then
+    print_error "Keine package.json gefunden!"
+    print_error "Bitte im Projekt-Root ausführen."
+    exit 1
+fi
+
+print_status "Projekt erkannt: $(pwd)"
+echo
+
+# Function to remove directory if exists
+remove_if_exists() {
+    if [ -d "$1" ]; then
+        print_status "Lösche: $1"
+        rm -rf "$1"
+        print_success "$1 gelöscht"
+    else
+        print_warning "$1 nicht gefunden (bereits sauber)"
+    fi
+}
+
+# Function to remove file if exists
+remove_file_if_exists() {
+    if [ -f "$1" ]; then
+        print_status "Lösche: $1"
+        rm -f "$1"
+        print_success "$1 gelöscht"
+    else
+        print_warning "$1 nicht gefunden"
+    fi
+}
+
+# 1. Nuxt Cache löschen
+echo -e "${YELLOW}📁 Nuxt Cache wird geleert...${NC}"
+remove_if_exists ".nuxt"
+remove_if_exists ".output"
+remove_if_exists "dist"
+remove_if_exists ".nitro"
+echo
+
+# 2. Node modules löschen
+echo -e "${YELLOW}📦 Node modules werden geleert...${NC}"
+remove_if_exists "node_modules"
+echo
+
+# 3. Lock files löschen
+echo -e "${YELLOW}🔒 Lock files werden geleert...${NC}"
+remove_file_if_exists "pnpm-lock.yaml"
+remove_file_if_exists "package-lock.json"
+remove_file_if_exists "yarn.lock"
+echo
+
+# 4. pnpm Store leeren (falls pnpm vorhanden)
+if command -v pnpm &> /dev/null; then
+    echo -e "${YELLOW}🗄️ pnpm Store wird geleert...${NC}"
+    print_status "pnpm store prune wird ausgeführt..."
+    pnpm store prune 2>/dev/null || print_warning "pnpm store prune fehlgeschlagen"
+    print_success "pnpm Store geleert"
+    echo
+fi
+
+# 5. npm Cache leeren (falls npm vorhanden)
+if command -v npm &> /dev/null; then
+    echo -e "${YELLOW}💾 npm Cache wird geleert...${NC}"
+    print_status "npm cache clean --force wird ausgeführt..."
+    npm cache clean --force 2>/dev/null || print_warning "npm cache clean fehlgeschlagen"
+    print_success "npm Cache geleert"
+    echo
+fi
+
+# 6. Temp files (optional)
+echo -e "${YELLOW}🗑️ Temp files werden geleert...${NC}"
+remove_if_exists ".tmp"
+remove_if_exists "tmp"
+remove_file_if_exists ".DS_Store"
+echo
+
+# Summary
+echo -e "${GREEN}============================================${NC}"
+echo -e "${GREEN}✅ Cache komplett geleert!${NC}"
+echo -e "${GREEN}============================================${NC}"
+echo
+
+# Next steps
+echo -e "${BLUE}💡 Nächste Schritte:${NC}"
+echo
+
+if command -v pnpm &> /dev/null; then
+    echo -e "   ${YELLOW}pnpm install${NC}    # Dependencies installieren"
+    echo -e "   ${YELLOW}pnpm dev${NC}        # Dev Server starten"
+elif command -v npm &> /dev/null; then
+    echo -e "   ${YELLOW}npm install${NC}     # Dependencies installieren"
+    echo -e "   ${YELLOW}npm run dev${NC}     # Dev Server starten"
+else
+    echo -e "   ${YELLOW}npm install${NC} oder ${YELLOW}pnpm install${NC}  # Dependencies installieren"
+fi
+
+echo
+echo -e "${BLUE}🚀 Viel Erfolg!${NC}"

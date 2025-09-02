@@ -1,0 +1,202 @@
+#!/usr/bin/env bash
+# ============================================================
+# prts.sh — Port Radar & Port Cleaner (macOS/BSD)
+# Autor: LEVOGNE (admin@lesigns.de)
+# Lizenz: MIT
+#
+# Zweck:
+#   • Übersicht: Zeigt für gängige Dev-Frameworks, ob typische Ports frei/aktiv sind
+#   • Diagnose: Listet auf Wunsch alle aktiven TCP-LISTEN-Ports
+#   • Cleanup: Beendet gezielt (-c <port>) oder gesammelt (--cleanall) Prozesse auf Ports
+#
+# Nutzung:
+#   ./prts.sh               # Übersicht der bekannten Dev-Ports (frei/aktiv + PID/Prozess)
+#   ./prts.sh --all         # Alle aktiven Listening-Ports kompakt auflisten
+#   ./prts.sh --cleanall    # Alle bekannten Dev-Ports hart freigeben (kill -9)
+#   ./prts.sh -c 3000       # Port 3000 gezielt freigeben
+#
+# Optional:
+#   PRTS_EXTRA="9000,9100" ./prts.sh   # zusätzliche Ports in die Prüfung/Cleanup einbeziehen
+#
+# Hinweise:
+#   • macOS hat i. d. R. kein `ss`; hier wird `lsof` verwendet.
+#   • --cleanall/-c nutzen bewusst SIGKILL (-9). Für sanftere Stops in kill_port anpassen.
+#   • Script ist defensiv (set -euo pipefail) und bricht bei Fehlern/undef. Vars ab.
+# ============================================================
+
+set -euo pipefail
+
+# -------- bekannte Ports: Label:port[,port...] ----------------
+KNOWN_ENTRIES=(
+  "FastAPI/Starlette:8000,8001,8080"
+  "Nuxt/Vite:3000,3001,5173"
+  "React/Next.js:3000,3001"
+  "Vue CLI:8080"
+  "Node/Express/Koa:3000,8080"
+  "Rust Actix/Rocket:8000,8080"
+  "Reverse Proxy (Nginx/Caddy):80,443,2019"
+  "Traefik:8080"
+  "Python (SimpleHTTPServer/uvicorn):8000,8001"
+  "Docker Desktop (typisch):2375,2376"
+  "PostgreSQL:5432"
+  "MySQL/MariaDB:3306"
+  "Redis:6379"
+  "MongoDB:27017"
+)
+
+# Zusätzliche Ports via Env (Komma-separiert), z. B. PRTS_EXTRA="9000,9100"
+EXTRA_PORTS="${PRTS_EXTRA:-}"
+
+# -------- TTY-abhängige Farben (fällt auf plain Text zurück) ---
+if [[ -t 1 ]]; then
+  RED=$'\033[31m'; GREEN=$'\033[32m'; YELLOW=$'\033[33m'; CYAN=$'\033[36m'; DIM=$'\033[2m'; BOLD=$'\033[1m'; RESET=$'\033[0m'
+else
+  RED=""; GREEN=""; YELLOW=""; CYAN=""; DIM=""; BOLD=""; RESET=""
+fi
+
+# -------- Abhängigkeiten prüfen --------------------------------
+for cmd in lsof awk ps kill; do
+  command -v "$cmd" >/dev/null || {
+    echo "Fehlt: $cmd (bitte installieren, z. B. via Homebrew)" >&2
+    exit 1
+  }
+done
+
+# -------- Hilfsfunktionen --------------------------------------
+
+# pad "text" width  → einfache linke Ausrichtung für Spalten
+pad() { printf "%-${2}s" "$1"; }
+
+# who_listens <port>
+#   Liefert "PID|CMDLINE|NAME" wenn ein Prozess auf TCP:<port> LISTENt, sonst leer.
+#   - lsof: -nP (kein DNS/Service-Name), -iTCP:PORT, -sTCP:LISTEN, -F für maschinenlesbares Format
+#   - ps ergänzt vollständige Kommandozeile als Fallback
+who_listens() {
+  lsof -nP -iTCP:"$1" -sTCP:LISTEN -F pcPn |
+    awk '
+      BEGIN{pid="";cmd="";name=""}
+      /^p/ {pid=substr($0,2)}
+      /^c/ {cmd=substr($0,2)}
+      /^n/ {name=substr($0,2)}
+      END {
+        if (pid!="") {
+          cmdline=cmd
+          while (( "ps -o command= -p " pid ) | getline line ) {
+            if (length(line)>0) { cmdline=line; break }
+          }
+          close("ps -o command= -p " pid)
+          print pid "|" cmdline "|" name
+        }
+      }'
+}
+
+# Tabellenkopf für die Übersicht
+print_table_header() {
+  echo "${BOLD}$(pad "Port" 8) $(pad "Status" 10) $(pad "Label" 24) $(pad "PID" 8) Prozess${RESET}"
+  echo "${DIM}$(pad "----" 8) $(pad "------" 10) $(pad "-----" 24) $(pad "---" 8) -------${RESET}"
+}
+
+# check_port <label> <port>  → Zeile "FREI/AKTIV" inkl. PID/Prozess ausgeben
+check_port() {
+  local label="$1" port="$2"
+  local info
+  info="$(who_listens "$port" || true)"
+  if [[ -n "$info" ]]; then
+    local pid cmd
+    pid="${info%%|*}"
+    cmd="${info#*|}"; cmd="${cmd%%|*}"
+    echo "$(pad "$port" 8) ${RED}$(pad "AKTIV" 10)${RESET} $(pad "$label" 24) $(pad "$pid" 8) ${cmd}"
+  else
+    echo "$(pad "$port" 8) ${GREEN}$(pad "FREI" 10)${RESET}  $(pad "$label" 24) $(pad "-" 8) -"
+  fi
+}
+
+# kill_port <port>
+#   Beendet (hart, SIGKILL) den Prozess, der auf dem Port lauscht.
+#   Achtung: Dies kann ungespeicherte Zustände beenden. Für sanfter:
+#     kill "$pid" && sleep 1 && kill -9 "$pid" (zweistufig)
+kill_port() {
+  local port="$1"
+  local info
+  info="$(who_listens "$port" || true)"
+  if [[ -n "$info" ]]; then
+    local pid="${info%%|*}"
+    echo "${YELLOW}Beende Prozess auf Port ${port} (PID $pid)...${RESET}"
+    kill -9 "$pid" && echo "${GREEN}Port $port freigegeben.${RESET}"
+  else
+    echo "${CYAN}Port $port ist bereits frei.${RESET}"
+  fi
+}
+
+# clean_all
+#   Geht alle bekannten (und optional EXTRA) Ports durch und ruft kill_port
+clean_all() {
+  echo "${YELLOW}Alle bekannten Ports beenden...${RESET}"
+  for line in "${KNOWN_ENTRIES[@]}"; do
+    ports="${line#*:}"
+    IFS=',' read -r -a arr <<< "$ports"
+    for p in "${arr[@]}"; do
+      kill_port "$p"
+    done
+  done
+  if [[ -n "$EXTRA_PORTS" ]]; then
+    IFS=',' read -r -a extras <<< "$EXTRA_PORTS"
+    for p in "${extras[@]}"; do
+      [[ -n "$p" ]] && kill_port "$p"
+    done
+  fi
+}
+
+# list_all_active
+#   Kompakte Auflistung aller Listening-TCP-Sockets (Proto, Adresse:Port, PID, Command)
+list_all_active() {
+  echo "${BOLD}AKTIVE LISTEN-PORTS (TCP)${RESET}"
+  lsof -nP -iTCP -sTCP:LISTEN |
+    awk 'NR==1{next} {printf "%-5s %-23s %-7s %s\n", $8, $9, $2, $1}' |
+    sort -k2,2
+}
+
+# -------- UI: Kopfzeile & Routing --------------------------------
+header() {
+  echo "${BOLD}prts.sh — Port Radar & Cleaner${RESET}"
+  echo "${DIM}Nutzung:${RESET}"
+  echo "  ./prts.sh             Übersicht"
+  echo "  ./prts.sh --all       Alle aktiven Ports anzeigen"
+  echo "  ./prts.sh --cleanall  Alle bekannten Ports freigeben"
+  echo "  ./prts.sh -c 3000     Port 3000 gezielt freigeben"
+  echo
+}
+
+main() {
+  header
+  case "${1:-}" in
+    --all)
+      list_all_active
+      ;;
+    --cleanall)
+      clean_all
+      ;;
+    -c)
+      [[ -z "${2:-}" ]] && { echo "Bitte Port angeben: ./prts.sh -c <port>"; exit 1; }
+      kill_port "$2"
+      ;;
+    *)
+      print_table_header
+      for line in "${KNOWN_ENTRIES[@]}"; do
+        label="${line%%:*}"; ports="${line#*:}"
+        IFS=',' read -r -a arr <<< "$ports"
+        for p in "${arr[@]}"; do
+          check_port "$label" "$p"
+        done
+      done
+      if [[ -n "$EXTRA_PORTS" ]]; then
+        IFS=',' read -r -a extras <<< "$EXTRA_PORTS"
+        for p in "${extras[@]}"; do
+          [[ -n "$p" ]] && check_port "Extra" "$p"
+        done
+      fi
+      ;;
+  esac
+}
+
+main "$@"

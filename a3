@@ -14,34 +14,34 @@ usage() {
 
 🎋 asciitree - Zeigt die Baumstruktur eines Verzeichnisses
 
-Autor: Levogne  
-Version: 1.2  
+Autor: Levogne
+Version: 1.2
 Lizenz: MIT
 
-Syntax:  
-  a3 [OPTION] [VERZEICHNIS]  
+Syntax:
+  a3 [OPTION] [VERZEICHNIS]
   a3 <projekt-typ>
 
-Optionen:  
-  -h, --help       Zeigt diese Hilfe an  
-  -a, --all        Zeigt Verzeichnisse und Dateien an, inkl. versteckte Dateien  
-  -v, --version    Zeigt die Skriptversion an  
-  -0, -1, -2..     Zeigt die Struktur bis zur angegebenen Tiefe  
-  --exc ORDNER1,ORDNER2  Schließt bestimmte Ordner von der Anzeige aus  
-  --export DATEI   Exportiert die Ausgabe in eine Datei  
+Optionen:
+  -h, --help       Zeigt diese Hilfe an
+  -a, --all        Zeigt Verzeichnisse und Dateien an, inkl. versteckte Dateien
+  -v, --version    Zeigt die Skriptversion an
+  -[0-9]           Zeigt die Struktur bis zur angegebenen Tiefe (z. B. -2)
+  --exc ORDNER1,ORDNER2  Schließt bestimmte Ordner von der Anzeige aus
+  --export DATEI   Exportiert die Ausgabe in eine Datei
 
 Projekt-Typen:
-  fastapi          FastAPI-Projekte (ignoriert .venv, exports zu a3FASTAPI.txt)
-  vue              Vue.js-Projekte (ignoriert node_modules, exports zu a3VUE.txt)
-  react            React-Projekte (ignoriert node_modules, exports zu a3REACT.txt)
-  nuxt             Nuxt-Projekte (ignoriert node_modules, .nuxt, exports zu a3NUXT.txt)
+  fastapi          FastAPI-Projekte (ignoriert .venv, exportiert a3FASTAPI.txt)
+  vue              Vue.js-Projekte (ignoriert node_modules, exportiert a3VUE.txt)
+  react            React-Projekte (ignoriert node_modules, exportiert a3REACT.txt)
+  nuxt             Nuxt-Projekte (ignoriert node_modules, .nuxt, exportiert a3NUXT.txt)
 
-Beispiele:  
-  a3 ./                     Zeigt nur die sichtbare Verzeichnisstruktur  
-  a3 ./ -a                  Zeigt alle Dateien und Ordner inkl. versteckter Dateien  
-  a3 ./ --exc test,temp     Schließt 'test' und 'temp' aus  
-  a3 ./ --export baum.txt   Exportiert die Struktur in eine Datei  
-  a3 fastapi                Zeigt die Struktur für ein FastAPI-Projekt
+Beispiele:
+  a3 ./                     Zeigt nur die sichtbare Verzeichnisstruktur
+  a3 ./ -a                  Zeigt alle Dateien/Ordner inkl. versteckter Dateien
+  a3 ./ --exc test,temp     Schließt 'test' und 'temp' aus
+  a3 ./ --export baum.txt   Exportiert die Struktur in eine Datei
+  a3 fastapi                Struktur für ein FastAPI-Projekt (mit Exports)
 
 EOF
 }
@@ -81,70 +81,101 @@ asciitree() {
     local current_depth=${5:-0}
     local exclude_dirs=(${6//,/ })
     local export_file=${7:-""}
-    local prefix="│   "
     local last_prefix="└── "
     local mid_prefix="├── "
 
-    # Verlasse die Funktion, wenn die maximale Tiefe erreicht ist
+    # Abbruch bei max. Tiefe
     if [ "$current_depth" -ge "$max_depth" ]; then
         return
     fi
 
-    local items
+    # ---- portables realpath (ohne zwingendes Symlink-Resolve) ----
+    _realpath() {
+        if command -v realpath >/dev/null 2>&1; then
+            realpath "$1"
+        elif command -v grealpath >/dev/null 2>&1; then
+            grealpath "$1"
+        else
+            # Fallback: absoluter Pfad via cd+pwd; löst Symlinks nicht zwingend auf
+            printf '%s/%s\n' "$(cd "$(dirname -- "$1")" 2>/dev/null && pwd)" "$(basename -- "$1")"
+        fi
+    }
 
+    # ---- Einträge sicher einlesen (ohne Whitespacesplitting) ----
+    local -a items=()
     if [ "$show_files" = true ]; then
-        # Zeige alle Dateien und Ordner, inkl. versteckter
-        items=$(ls -A "$dir")
+        # alle Dateien/Ordner inkl. versteckte
+        while IFS= read -r line; do items+=("$line"); done < <(LC_ALL=C ls -1A "$dir" 2>/dev/null)
     else
-        # Zeige nur sichtbare Dateien und Ordner
-        items=$(find "$dir" -mindepth 1 -maxdepth 1 ! -name ".*" | sed 's#.*/##')
+        # nur sichtbare (ohne .dot) – BSD/macOS-Fallback falls -printf fehlt
+        if command -v gfind >/dev/null 2>&1; then
+            while IFS= read -r line; do items+=("$line"); done < <(LC_ALL=C gfind "$dir" -mindepth 1 -maxdepth 1 -not -name ".*" -printf '%f\n' 2>/dev/null)
+        else
+            while IFS= read -r line; do items+=("$line"); done < <(LC_ALL=C ls -1 "$dir" 2>/dev/null | grep -v '^\.' || true)
+        fi
     fi
 
-    local count=$(echo "$items" | wc -l)
+    local count=${#items[@]}
     local i=1
 
-    for item in $items; do
+    for item in "${items[@]}"; do
         local item_path="$dir/$item"
-        local abs_item_path=$(realpath "$item_path")
+        local abs_item_path="$(_realpath "$item_path" 2>/dev/null)"
 
-        # Überspringe ausgeschlossene Ordner
+        # Ausschlüsse prüfen (Name oder absoluter Pfad)
         for excluded in "${exclude_dirs[@]}"; do
-            local abs_excluded=$(realpath "$excluded" 2>/dev/null || echo "$excluded")
-            if [[ "$abs_item_path" == "$abs_excluded" || "$item" == "$excluded" ]]; then
+            local abs_excluded="$(_realpath "$excluded" 2>/dev/null || echo "$excluded")"
+            if [[ "$item" == "$excluded" || "$abs_item_path" == "$abs_excluded" ]]; then
                 continue 2
             fi
         done
 
-        # Ausgabe vorbereiten
+        # Linien zeichnen
+        local prefix
+        prefix="$(printf "%${indent}s")"
         local output_line
         if [ $i -eq $count ]; then
-            output_line="$(printf "%${indent}s")${last_prefix}$item"
+            output_line="${prefix}${last_prefix}${item}"
         else
-            output_line="$(printf "%${indent}s")${mid_prefix}$item"
+            output_line="${prefix}${mid_prefix}${item}"
         fi
 
-        # Ausgabe entweder in Datei schreiben oder direkt anzeigen
+        # Ausgabe / Export
         if [ -n "$export_file" ]; then
             echo "$output_line" >> "$export_file"
         else
             echo "$output_line"
         fi
 
-        # Rekursiver Aufruf für Unterordner
+        # Rekursion bei Verzeichnis
         if [ -d "$item_path" ]; then
             asciitree "$item_path" $((indent + 4)) "$show_files" "$max_depth" $((current_depth + 1)) "${exclude_dirs[*]}" "$export_file"
         fi
+
         i=$((i + 1))
     done
 }
 
-# Prüfen auf Projekt-Typ als einziges Argument
-if [ $# -eq 1 ] && [[ ! "$1" == -* ]]; then
-    handle_project_type "$1" || { echo "Unbekannter Projekt-Typ: $1"; usage; exit 1; }
+# ----------------- Argumente & Routing -----------------
+
+# Wenn erstes Argument kein Schalter ist, nur echte Projekt-Typen speziell behandeln;
+# alles andere als Verzeichnis interpretieren.
+dir=""
+if [ $# -ge 1 ] && [[ "$1" != -* ]]; then
+    case "$1" in
+        fastapi|vue|react|nuxt)
+            handle_project_type "$1"
+            exit $?   # exec im Handler beendet das Skript in der Regel
+            ;;
+        *)
+            dir="$1"  # z. B. "./" oder "/path/to/dir"
+            shift     # restliche Optionen (-a, --exc, ...) weiter verarbeiten
+            ;;
+    esac
 fi
 
-# Argumente verarbeiten
-if [ $# -eq 0 ]; then
+# Ohne Argumente → Hilfe
+if [ $# -eq 0 ] && [ -z "$dir" ]; then
     usage
     exit 0
 fi
@@ -154,8 +185,8 @@ max_depth=9999
 show_files=false
 exclude_dirs=()
 export_file=""
-dir=""
 
+# Optionen parsen
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -h|--help)
@@ -175,8 +206,10 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --exc)
-            if [ -n "$2" ]; then
-                exclude_dirs+=($(echo "$2" | tr ',' ' '))
+            if [ -n "${2:-}" ]; then
+                # Kommagetrennte Liste in Array
+                IFS=',' read -r -a _tmp <<< "$2"
+                exclude_dirs+=("${_tmp[@]}")
                 shift 2
             else
                 echo "❌ Fehler: '--exc' benötigt eine Liste von Ordnern."
@@ -184,9 +217,9 @@ while [[ $# -gt 0 ]]; do
             fi
             ;;
         --export)
-            if [ -n "$2" ]; then
+            if [ -n "${2:-}" ]; then
                 export_file="$2"
-                > "$export_file"
+                : > "$export_file"
                 shift 2
             else
                 echo "❌ Fehler: '--export' benötigt einen Dateinamen."
@@ -194,15 +227,22 @@ while [[ $# -gt 0 ]]; do
             fi
             ;;
         *)
+            # weiteres Verzeichnisargument (falls gegeben)
             dir="$1"
             shift
             ;;
     esac
 done
 
-# Standardverzeichnis festlegen
+# Standardverzeichnis
 if [ -z "$dir" ]; then
     dir="."
+fi
+
+# Gültigkeit prüfen
+if [ ! -d "$dir" ]; then
+    echo "❌ Fehler: '$dir' ist kein Verzeichnis."
+    exit 1
 fi
 
 # Hauptfunktion aufrufen
