@@ -1,0 +1,241 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+echo "===================================="
+echo " 🔧 AUTO MAIN-SQUASH-MERGE (robust)"
+echo "===================================="
+echo ""
+
+# =========================
+# Konfiguration (ohne Prompts)
+# =========================
+REMOTE_NAME="${REMOTE_NAME:-origin}"
+MAIN_BRANCH="${MAIN_BRANCH:-main}"
+
+# Standard: sicher (keine uncommitted Änderungen übernehmen)
+INCLUDE_LOCAL_CHANGES="${INCLUDE_LOCAL_CHANGES:-0}"  # 0|1
+
+# Auto-"Ja" für Cleanup – wird NUR nach erfolgreichem Push ausgeführt
+DELETE_REMOTE_BRANCH="${DELETE_REMOTE_BRANCH:-1}"    # 0|1
+DELETE_LOCAL_TEST_BRANCH="${DELETE_LOCAL_TEST_BRANCH:-1}" # 0|1
+DELETE_BACKUP_TAGS="${DELETE_BACKUP_TAGS:-0}"        # 0|1 (standard: Backups behalten -> robust)
+
+# =========================
+# Eingaben
+# =========================
+BRANCH="${1:-}"
+VERSION="${2:-}"
+DESCRIPTION="${3:-}"
+
+if [[ -z "${BRANCH}" ]]; then
+  read -r -p "➡️ Claude-Branch (z.B. claude/fix-xyz): " BRANCH
+fi
+if [[ -z "${BRANCH}" ]]; then
+  echo "❌ Fehler: Branch darf nicht leer sein!"
+  exit 1
+fi
+
+if [[ -z "${VERSION}" ]]; then
+  read -r -p "➡️ Neue Version (Commit-Titel): " VERSION
+fi
+if [[ -z "${VERSION}" ]]; then
+  echo "❌ Fehler: Version darf nicht leer sein!"
+  exit 1
+fi
+
+if [[ -z "${DESCRIPTION}" ]]; then
+  read -r -p "➡️ Beschreibung (optional, Enter = leer): " DESCRIPTION
+fi
+
+# =========================
+# Vorab-Checks
+# =========================
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "❌ Kein Git-Repository (bitte im Repo-Ordner ausführen)"
+  exit 1
+}
+
+git remote get-url "${REMOTE_NAME}" >/dev/null 2>&1 || {
+  echo "❌ Remote '${REMOTE_NAME}' nicht gefunden"
+  exit 1
+}
+
+# Working tree check
+if [[ "${INCLUDE_LOCAL_CHANGES}" != "1" ]]; then
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "❌ Uncommitted Änderungen gefunden."
+    echo "   -> Entweder commit/stash oder mit INCLUDE_LOCAL_CHANGES=1 starten."
+    exit 1
+  fi
+fi
+
+# Remote-Branch existiert?
+if ! git ls-remote --exit-code "${REMOTE_NAME}" "${BRANCH}" >/dev/null 2>&1; then
+  echo "❌ Remote-Branch existiert nicht: ${REMOTE_NAME}/${BRANCH}"
+  exit 1
+fi
+
+# Local test-Branch Name (nur für optionales Löschen am Ende)
+BASE="${BRANCH#claude/}"
+LOCAL_TEST_BRANCH="test-${BASE//\//-}"
+
+# =========================
+# Rollback/Trap
+# =========================
+PREV_BRANCH="$(git branch --show-current 2>/dev/null || true)"
+STASHED=0
+MAIN_BACKUP_TAG=""
+MAIN_BACKUP_HASH=""
+
+restore_on_error() {
+  echo ""
+  echo "===================================="
+  echo " ❌ FEHLER -> Rollback"
+  echo "===================================="
+
+  # Zurück auf main backup, falls wir schon eins gesetzt haben
+  if [[ -n "${MAIN_BACKUP_HASH}" ]]; then
+    echo "↩️  Reset auf Backup: ${MAIN_BACKUP_HASH}"
+    git reset --hard "${MAIN_BACKUP_HASH}" >/dev/null 2>&1 || true
+  fi
+
+  # Zurück zum vorherigen Branch
+  if [[ -n "${PREV_BRANCH}" ]]; then
+    git checkout -q "${PREV_BRANCH}" >/dev/null 2>&1 || true
+  fi
+
+  # Stash zurückholen, falls erstellt
+  if [[ "${STASHED}" == "1" ]]; then
+    echo "📦 Stelle Stash wieder her..."
+    git stash pop -q || true
+  fi
+
+  echo "🚫 Abgebrochen. Repo sollte wieder sauber sein."
+}
+trap restore_on_error ERR
+
+# =========================
+# Optional: lokale Änderungen stashen (nur wenn INCLUDE_LOCAL_CHANGES=1)
+# =========================
+if [[ "${INCLUDE_LOCAL_CHANGES}" == "1" ]]; then
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "📦 Stashe lokale Änderungen temporär..."
+    git stash push -u -m "AUTO-MERGE local changes $(date +%Y%m%d_%H%M%S)" >/dev/null
+    STASHED=1
+  fi
+fi
+
+# =========================
+# MAIN aktualisieren
+# =========================
+echo ""
+echo "===================================="
+echo " 🔄 MAIN aktualisieren"
+echo "===================================="
+
+git fetch -q "${REMOTE_NAME}"
+
+# main auschecken
+if [[ "$(git branch --show-current)" != "${MAIN_BRANCH}" ]]; then
+  git checkout -q "${MAIN_BRANCH}"
+fi
+
+# Upstream sicherstellen (falls nicht gesetzt)
+if ! git rev-parse --abbrev-ref "${MAIN_BRANCH}@{upstream}" >/dev/null 2>&1; then
+  git branch --set-upstream-to="${REMOTE_NAME}/${MAIN_BRANCH}" "${MAIN_BRANCH}" >/dev/null 2>&1 || true
+fi
+
+# Rebase pull
+git pull --rebase -q "${REMOTE_NAME}" "${MAIN_BRANCH}"
+
+# Backup von main (Tag + Hash)
+MAIN_BACKUP_HASH="$(git rev-parse HEAD)"
+MAIN_BACKUP_TAG="MAIN_BACKUP_$(git rev-parse --short HEAD)_$(date +%Y%m%d_%H%M%S)"
+git tag "${MAIN_BACKUP_TAG}"
+echo "🔐 Backup-Tag gesetzt: ${MAIN_BACKUP_TAG}"
+
+# =========================
+# Squash Merge
+# =========================
+echo ""
+echo "===================================="
+echo " 🔀 Squash Merge"
+echo "===================================="
+
+git fetch -q "${REMOTE_NAME}" "${BRANCH}"
+
+git merge --squash "${REMOTE_NAME}/${BRANCH}" >/dev/null
+
+# Stash wieder anwenden (nur wenn INCLUDE_LOCAL_CHANGES=1 und gestashed)
+if [[ "${STASHED}" == "1" ]]; then
+  echo "📦 Wende lokale Änderungen wieder an..."
+  git stash pop -q
+  STASHED=0
+fi
+
+git add -A
+
+# Commit
+echo "📝 Commit: ${VERSION}"
+if [[ -n "${DESCRIPTION}" ]]; then
+  git commit -q -m "${VERSION}" -m "${DESCRIPTION}"
+else
+  git commit -q -m "${VERSION}"
+fi
+
+# =========================
+# Push + Validierung
+# =========================
+echo ""
+echo "===================================="
+echo " 🚀 Push"
+echo "===================================="
+
+git push -q "${REMOTE_NAME}" "${MAIN_BRANCH}"
+
+# Validierung: local main == remote main
+git fetch -q "${REMOTE_NAME}" "${MAIN_BRANCH}"
+LOCAL_HEAD="$(git rev-parse "${MAIN_BRANCH}")"
+REMOTE_HEAD="$(git rev-parse "${REMOTE_NAME}/${MAIN_BRANCH}")"
+
+if [[ "${LOCAL_HEAD}" != "${REMOTE_HEAD}" ]]; then
+  echo "⚠️ Push/Sync unklar: local != remote"
+  echo "   local : ${LOCAL_HEAD}"
+  echo "   remote: ${REMOTE_HEAD}"
+  exit 1
+fi
+
+echo "✅ Push verifiziert: ${MAIN_BRANCH} ist synchron"
+
+# =========================
+# Cleanup (NUR bei Erfolg)
+# =========================
+echo ""
+echo "===================================="
+echo " 🧹 Cleanup (nur nach Erfolg)"
+echo "===================================="
+
+if [[ "${DELETE_REMOTE_BRANCH}" == "1" ]]; then
+  # Falls Branch schon weg ist, nicht hart scheitern
+  git push -q "${REMOTE_NAME}" --delete "${BRANCH}" >/dev/null 2>&1 || true
+  echo "🗑️  Remote-Branch gelöscht (wenn vorhanden): ${BRANCH}"
+fi
+
+if [[ "${DELETE_LOCAL_TEST_BRANCH}" == "1" ]]; then
+  git branch -D "${LOCAL_TEST_BRANCH}" >/dev/null 2>&1 || true
+  echo "🗑️  Lokaler Test-Branch gelöscht (wenn vorhanden): ${LOCAL_TEST_BRANCH}"
+fi
+
+if [[ "${DELETE_BACKUP_TAGS}" == "1" ]]; then
+  git tag -d "${MAIN_BACKUP_TAG}" >/dev/null 2>&1 || true
+  echo "🗑️  Backup-Tag gelöscht: ${MAIN_BACKUP_TAG}"
+fi
+
+echo ""
+echo "===================================="
+echo " 🎉 FERTIG"
+echo "===================================="
+echo "✅ MAIN: ${VERSION}"
+[[ -n "${DESCRIPTION}" ]] && echo "📝 ${DESCRIPTION}"
+echo "🔐 Backup-Tag: ${MAIN_BACKUP_TAG}"
+echo ""

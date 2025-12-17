@@ -1,0 +1,31 @@
+#!/bin/bash
+set -e
+
+echo "===================================="
+echo " 🚀 Schnell-Branch-Switcher"
+echo "===================================="
+echo ""
+
+# muss in git repo laufen
+git rev-parse --is-inside-work-tree >/dev/null 2>&1 || {
+  echo "❌ Kein Git-Repo (bitte im Repo-Ordner ausführen)"
+  exit 1
+}
+
+read -p "Claude-Branch: " REMOTE_BRANCH
+[ -z "$REMOTE_BRANCH" ] && exit 1
+
+# Prefix sauber entfernen + "/" im local branch entschärfen
+BASE="${REMOTE_BRANCH#claude/}"
+LOCAL_BRANCH="test-${BASE//\//-}"
+
+git fetch origin
+git show-ref --verify --quiet "refs/remotes/origin/$REMOTE_BRANCH" || {
+  echo "❌ Branch nicht gefunden"
+  exit 1
+}
+
+git branch -D "$LOCAL_BRANCH" 2>/dev/null || true
+git checkout -b "$LOCAL_BRANCH" "origin/$REMOTE_BRANCH"
+
+echo "✅ In $LOCAL_BRANCH gewechselt"
